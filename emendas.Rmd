@@ -1,0 +1,297 @@
+---
+title: "Untitled"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r}
+options(encoding = 'Latin1')
+```
+
+
+```{r}
+library(tidyverse)
+library(DT)
+library(janitor)
+library(readxl)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(openxlsx)
+library(shiny)
+library(shinyWidgets)
+```
+
+```{r}
+tabela_reais = function (df,coluna = NULL) {
+      datatable((df)%>%
+  # "row" para o total aparecer na linha, ou seja, totalizar os valores de uma coluna
+  adorn_totals("row") ,
+      filter = 'top', 
+      rownames = FALSE,
+      extensions = 'Buttons',
+      options = list( 
+                  # order = list (df[(length(df))], 'desc'),
+                  dom = "Blfrtip",
+                  buttons = 
+                    list("copy", list(
+                      extend = "collection",
+                      buttons = c("csv", "excel", "pdf"),
+                      text = "Download" ) ),
+                  lengthMenu = list( c(-1, 5, 10,20),
+                                     c( "tudo",5, 10, 20)),
+                  pageLength = 20 )
+      )%>%
+  formatRound(
+  # formatar apenas as colunas numericas.
+  # sapply para identificar as colunas numericas e combinar com o parametro COLUNA
+    # ((ncol(df %>% select_if(is.character))+1):(ncol(df )+1)),
+    # http://datamining.togaware.com/survivor/Remove_Non_Numeric.html
+    (c(colnames(df[,sapply(df, is.numeric)]), coluna)),
+  digits = 2,
+  interval = 3,
+  mark = ".",
+  dec.mark = ","
+) 
+}
+```
+
+```{r}
+emendas <- read_excel("C:/Users/andre.ferrari/Downloads/emendas_hist.xlsx",     skip = 9)
+
+
+
+
+emendas <-    clean_names(emendas)
+
+emendas <-  rename(emendas, despesas_pagas =movim_liquido_r_item_informacao )
+
+emendas <- emendas %>% filter(!is.na(despesas_pagas))
+
+emendas <- emendas %>% separate(autor_emendas_orcamento_nome, into = c("autor_emenda","numero_emenda"), sep = "/" )
+
+emendas <- emendas %>% mutate (autor_emenda = str_trim(autor_emenda))
+
+
+emendas <- emendas %>% mutate(mun_uf = str_c (municipio_cel, "-",uf_cel_sigla))
+
+
+emendas <-  emendas %>% mutate (code_regiao = case_when(
+  
+  regiao_cel == "NORTE" ~ 1,
+  regiao_cel == "NORDESTE" ~ 2,
+  regiao_cel == "SUDESTE" ~ 3,
+  regiao_cel == "SUL" ~ 4,
+  regiao_cel == "CENTRO OESTE" ~ 5
+  ))
+
+
+emendas <- emendas %>% mutate(tipo_local =   case_when(
+  municipio_cel != "SEM INFORMACAO" ~ "Município",
+  regiao_cel == "CENTRO-OESTE" & uf_cel_nome == "SEM INFORMACAO" ~ "Região",
+  regiao_cel == "NORTE"& uf_cel_nome == "SEM INFORMACAO" ~ "Região",
+  regiao_cel == "SUL" & uf_cel_nome == "SEM INFORMACAO"~ "Região",
+  regiao_cel == "NORDESTE"& uf_cel_nome == "SEM INFORMACAO" ~ "Região",
+  regiao_cel == "SUDESTE" & uf_cel_nome == "SEM INFORMACAO"~ "Região",
+  regiao_cel == "EXTERIOR" & uf_cel_nome == "SEM INFORMACAO"~ "Exterior",
+  regiao_cel == "NACIONAL" & uf_cel_nome == "SEM INFORMACAO"~ "Brasil",
+  TRUE ~ "UF"
+  
+  ))
+
+
+emendas <- emendas %>%  mutate (local = case_when(
+  tipo_local == "Município"  ~ mun_uf,
+  tipo_local == "UF"  ~ str_c ( uf_cel_sigla,": municípios não identificados"),
+  tipo_local == "Região"  ~ str_c ( regiao_cel,": municípios não identificados"),
+  tipo_local == "Brasil"  ~ str_c ( tipo_local,": municípios não identificados"),
+  tipo_local == "Exterior"  ~ str_c ( tipo_local),
+  
+))
+
+library(readr)
+TABMUN <- read_delim("C:/Users/andre.ferrari/Downloads/TABMUN.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE) 
+
+TABMUN <- TABMUN %>% mutate(mun_uf = str_c (municipio_cel, "-",uf_cel_sigla))
+
+# adicionar o código IBGE à DF emendas
+emendas <- left_join(emendas,TABMUN %>% select(municipio_cel, codigo_ibge))
+
+# municipios <- read_csv("https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/municipios.csv")
+# municipios <-  rename(municipios, latitude_mun = latitude)
+# municipios <-  rename(municipios,   longitude_mun =longitude )
+# municipios <-  rename(municipios,   nome_mun =nome ) %>% select(!codigo_uf)
+# 
+# 
+# estados <- read_csv("https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/estados.csv")
+# 
+# estados <- rename(estados, latitude_uf = latitude)
+# estados <- rename(estados,   longitude_uf =longitude )
+# estados <-  rename(estados,   nome_uf =nome )
+```
+
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+ selectInput("autor", label = h3("Escolha o autor da emenda"), 
+    choices = unique(emendas$autor_emenda), 
+    multiple = TRUE,
+    selectize = TRUE,
+    selected = "EDUARDO BOLSONARO")
+autor <- reactive (emendas %>% filter(autor_emenda %in% c(input$autor)))
+
+```
+
+
+```{r eval=FALSE, include=FALSE}
+tabela_reais(emendas %>% group_by(autor_emenda, municipio_cel, uf_cel_sigla, regiao_cel) %>% summarise(valor_pago = sum(despesas_pagas)))
+```
+
+```{r}
+
+
+# 
+# emendas <- left_join(emendas,municipios)
+# 
+# emendas <- left_join(emendas, estados, by = c("uf_cel_sigla" = "uf"))
+```
+
+
+```{r message=FALSE, include=FALSE}
+library(geobr)
+
+#| collapse: true
+
+regiao <- read_region(year=2020) %>% mutate(name_region = ifelse(name_region == "Centro Oeste", "Centro-Oeste", name_region))
+regiao <- regiao %>% mutate(sigla = case_when(
+  
+  name_region == "Centro Oeste" ~ "CO",
+  name_region == "Nordeste" ~ "NE",
+  name_region == "Sul" ~ "S",
+  name_region == "Norte" ~ "N",
+  name_region == "Sudeste" ~ "SE",))
+
+
+
+uf <- read_state(year = 2020)
+
+
+cidades <- read_municipal_seat(year = 2010)
+# brasil <- read_country(year = 2020)
+# 
+# library(maps)
+# 
+# dat <- iso3166
+# head(dat)
+# 
+# dat$brasil <- dat$ISOname == "Brazil"
+```
+```{r}
+
+# emendas <- emendas %>% mutate(local = ifelse(municipio_cel == "SEM INFORMACAO", regiao_cel, str_c(municipio_cel, "-", uf_cel_sigla)))
+
+
+
+```
+
+
+```{r}
+# emendas <- emendas %>% mutate(latitude = ifelse(is.na(latitude_mun), latitude_uf, latitude_mun), longitude = ifelse(is.na(longitude_mun), longitude_uf, longitude_mun), nome = ifelse(is.na(nome_mun), nome_uf, str_c(nome_mun, "-",uf_cel_sigla)))
+# 
+# emendas <- emendas %>% mutate(nome = ifelse(is.na(nome), regiao_cel, nome))
+# 
+# emendas <- emendas %>% mutate(latitude = case_when(nome == "EXTERIOR" ~ -15.7795 ,
+#   nome == "NACIONAL"  ~ -15.7795 ,
+#   TRUE ~ latitude))
+# 
+# 
+# emendas <- emendas %>% mutate(longitude = case_when(nome == "EXTERIOR" ~ - 32 ,
+#   nome == "NACIONAL"  ~ -47.9297 ,
+#   TRUE ~ longitude))
+```
+
+```{r}
+# leaflet(emendas) %>% addTiles() %>% addMarkers(
+#   clusterOptions = markerClusterOptions()
+# )
+```
+
+```{r eval=FALSE, include=FALSE}
+p <- emendas %>% group_by(regiao_cel) %>% summarise(despesas_pagas = sum(despesas_pagas)) %>%
+  ggplot(aes(x = (fct_reorder(regiao_cel, despesas_pagas)), y = despesas_pagas, fill = regiao_cel)) +
+  geom_col() + 
+  labs(x = "autor")+ coord_flip()+
+   scale_fill_discrete()+
+  theme(legend.position = "none")  
+ggplotly(p)
+
+```
+```{r eval=FALSE, include=FALSE}
+p <- emendas %>% group_by(ano_lancamento, resultado_eof_codigo) %>% summarise(despesas_pagas = sum(despesas_pagas)) %>%
+  ggplot(aes(x = ano_lancamento, y = despesas_pagas, fill = resultado_eof_codigo)) +
+  geom_col() + 
+  labs(x = "ano")+ 
+   scale_fill_discrete()+
+  theme(legend.position = "none")  
+ggplotly(p)
+```
+```{r}
+
+
+```
+
+```{r}
+
+
+# addPolygons(data = cidades %>% filter(code_muni %in% emendas$codigo_ibge), fillColor = "red", stroke = FALSE)
+```
+
+
+```{r}
+
+```
+
+
+
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### Chart A
+
+```{r}
+
+
+
+renderLeaflet({
+  
+   leaflet() %>% addTiles() %>%
+  addPolygons(data = regiao %>% filter(code_region %in% autor()$code_regiao))  %>%
+  addPolygons(data = uf %>% filter (abbrev_state %in% autor()$uf_cel_sigla), fillColor = topo.colors(10, alpha = NULL), stroke = FALSE) %>% 
+   addMarkers(data = cidades %>% filter(code_muni %in% autor()$codigo_ibge),  clusterOptions = markerClusterOptions())
+  
+})
+
+```
+
+Column {data-width=550}
+-----------------------------------------------------------------------
+
+
+### Chart C
+
+```{r}
+
+
+renderDT({tabela_reais(autor() %>% group_by(  local, acao_governo_nome, programa_governo_nome) %>% summarise(valor_pago = sum(despesas_pagas)))}) 
+```
+
