@@ -1,5 +1,5 @@
 ---
-title: "Emenda Parlamentar (total aplicado entre 2015 a agosto de 2022)"
+title: "Emenda Parlamentar Individual - RP6 (valor pago entre 2015 e agosto de 2022)"
 output: 
   flexdashboard::flex_dashboard:
     orientation: columns
@@ -13,6 +13,11 @@ library(flexdashboard)
 
 ```{r}
 options(encoding = 'Latin1',digits = 3,scipen=999 )
+```
+
+```{r}
+# execute code if the date is later than a specified day
+
 ```
 
 
@@ -67,16 +72,13 @@ tabela_reais = function (df,coluna = NULL) {
 ```{r}
 emendas <- read_excel("emendas_hist.xlsx",     skip = 8)
 
-
-
-
 emendas <-    clean_names(emendas)
 
 emendas <-  rename(emendas, despesas_pagas =movim_liquido_r_item_informacao )
 
 emendas <- emendas %>% filter(!is.na(despesas_pagas), )
 
-emendas <- emendas %>% filter(autor_emendas_orcamento_nome != "PTRES ANTERIOR A 2015")
+# emendas <- emendas %>% filter(autor_emendas_orcamento_nome != "PTRES ANTERIOR A 2015")
 
 emendas <- emendas %>% separate(autor_emendas_orcamento_nome, into = c("autor_emenda","numero_emenda"), sep = "/" )
 
@@ -96,7 +98,7 @@ TABMUN <- read_delim("TABMUN.csv",
 TABMUN <- TABMUN %>% mutate(mun_uf = str_c (municipio_cel, "-",uf_cel_sigla))
 
 # adicionar o código IBGE à DF emendas
-emendas <- left_join(emendas,TABMUN %>% select(municipio_cel, codigo_ibge))
+emendas <- left_join(emendas,TABMUN %>% select(mun_uf, codigo_ibge))
 
 # municipios <- read_csv("https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/municipios.csv")
 
@@ -109,14 +111,7 @@ emendas <- left_join(emendas, municipios)
 
 emendas <- emendas %>% mutate(nome_mun_uf = str_c(nome_mun,"-",uf_cel_sigla))
 
-# write.xlsx(municipios,"municipios.xlsx")
-# 
-# 
-# estados <- read_csv("https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/estados.csv")
-# 
-# estados <- rename(estados, latitude_uf = latitude)
-# estados <- rename(estados,   longitude_uf =longitude )
-# estados <-  rename(estados,   nome_uf =nome )
+
 ```
 
 
@@ -146,14 +141,7 @@ emendas <- emendas %>% mutate(tipo_local =   case_when(
   ))
 
 
-# emendas <- emendas %>%  mutate (local = case_when(
-#   tipo_local == "município"  ~ mun_uf,
-#   tipo_local == "UF"  ~ str_c ( uf_cel_sigla,": municípios não identificados"),
-#   tipo_local == "Região"  ~ str_c ( regiao_cel,": municípios não identificados"),
-#   tipo_local == "Brasil"  ~ str_c ( tipo_local,": municípios não identificados"),
-#   tipo_local == "Exterior"  ~ str_c ( tipo_local),
-#   
-# ))
+# emendas <- emendas %>% mutate(tipo_emenda = ifelse(resultado_eof_codigo == "9", "Orçamento Secreto", "Demais"))
 
 
 emendas <- emendas %>%  mutate (local = case_when(
@@ -200,7 +188,7 @@ uf <- read_state(year = 2020)
 
 ```
 ```{r}
-emendas_react <- reactive(emendas %>% filter(autor_emenda %in% input$autor))
+emendas_react <- reactive(emendas %>% filter(autor_emenda %in% input$autor,resultado_eof_codigo == "6" ))
 
 filtro_uf <- reactive (emendas_react() %>% filter(tipo_local == "UF"))
 
@@ -216,11 +204,7 @@ geo_uf <- reactive( uf %>%  filter (abbrev_state %in% unique(filtro_uf()$uf_cel_
 
 
 geo_regiao <- reactive( regiao %>%  filter (sigla %in% unique(filtro_regiao()$sigla)))
-# geo_regiao <- (left_join (emendas %>% filter(tipo_local== "regiao") %>% select(local, autor_emenda), regiao, by = c("local"= "name_region")))
-# 
-# addPolygons(data = regiao %>% filter(code_region %in% unique(autor() %>% filter(tipo_local== "Região") %>% select(code_regiao))))  %>%
-#   addPolygons(data = uf %>% filter (abbrev_state %in% unique(autor() %>% filter(tipo_local== "UF") %>% select(uf_cel_sigla))), fillColor = topo.colors(100, alpha = NULL), stroke = FALSE) %>% 
-#    addMarkers(data = cidades %>% filter(code_muni %in% autor()$codigo_ibge),  clusterOptions = markerClusterOptions())
+
 
 ```
 
@@ -251,6 +235,10 @@ ggplotly(p)
 
 
 ```{r eval=FALSE, include=FALSE}
+tabela_reais(emendas %>% filter(resultado_eof_codigo == "6") %>% group_by(autor_emenda) %>% summarise(valor = sum(despesas_pagas)))
+```
+
+```{r eval=FALSE, include=FALSE}
 p <- emendas %>% group_by(ano_lancamento, orgao_uge_nome) %>% summarise(despesas_pagas = sum(despesas_pagas)) %>%
   ggplot(aes(x = ano_lancamento, y = despesas_pagas, fill = orgao_uge_nome)) +
   geom_col() + 
@@ -270,6 +258,9 @@ p <- emendas %>% group_by(ano_lancamento, resultado_eof_codigo) %>% summarise(de
 ggplotly(p)
 ```
 
+
+
+
 Inputs {.sidebar}
 -------------------------------------
 ```{r}
@@ -280,13 +271,12 @@ selectInput  ("autor", label = h3("Escolha o autor da emenda"),
    
     selected = "EDUARDO BOLSONARO", selectize = TRUE,multiple = TRUE)
 
-
 ```
 
 
 
 
-Column {data-width=450}
+Column {data-width=400}
 -----------------------------------------------------------------------
 
 
@@ -317,7 +307,7 @@ Column {.tabset}
 ```{r}
 
 
-renderDT({tabela_reais(emendas_react() %>% group_by(  local, tipo_local) %>% summarise(valor_pago = sum(despesas_pagas)))}) 
+renderDT({tabela_reais(emendas_react() %>% group_by( autor_emenda, local, tipo_local) %>% summarise(valor_pago = sum(despesas_pagas)))}) 
 ```
 
 
@@ -326,6 +316,6 @@ renderDT({tabela_reais(emendas_react() %>% group_by(  local, tipo_local) %>% sum
 ```{r}
 
 
-renderDT({tabela_reais(emendas_react() %>% group_by( autor_emenda, local, tipo_local, orgao_uge_nome,acao_governo_nome, programa_governo_nome) %>% summarise(valor_pago = sum(despesas_pagas)))}) 
+renderDT({tabela_reais(emendas_react() %>% group_by( autor_emenda,local, tipo_local, orgao_uge_nome,acao_governo_nome, programa_governo_nome) %>% summarise(valor_pago = sum(despesas_pagas)))}) 
 ```
 
