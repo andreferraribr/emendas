@@ -1,0 +1,401 @@
+---
+title: 'Emendômetro 2023: despesas empenhadas)'
+output:
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+resource_files:
+- regiao.dbf
+- regiao.prj
+- regiao.shx
+- uf.dbf
+- uf.prj
+- uf.shx
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r}
+options(encoding = 'Latin1',digits = 3,scipen=999 )
+```
+
+
+
+```{r}
+library(tidyverse)
+library(DT)
+library(janitor)
+library(readxl)
+library(ggplot2)
+library(plotly)
+library(leaflet)
+library(openxlsx)
+library(shiny)
+library(shinyWidgets)
+library(pre)
+library(lubridate)
+library(sf)
+
+```
+
+```{r}
+tabela_reais = function (df,coluna = NULL) {
+      datatable((df)%>%
+  # "row" para o total aparecer na linha, ou seja, totalizar os valores de uma coluna
+  adorn_totals("row") ,
+      filter = 'top', 
+      rownames = FALSE,
+      extensions = 'Buttons',
+      options = list( 
+                  # order = list (df[(length(df))], 'desc'),
+                  dom = "Blfrtip",
+                  buttons = 
+                    list("copy", list(
+                      extend = "collection",
+                      buttons = c("csv", "excel", "pdf"),
+                      text = "Download" ) ),
+                  lengthMenu = list( c(-1, 10, 15,20),
+                                     c( "tudo",10, 15, 20)),
+                  pageLength =10 )
+      )%>%
+  formatRound(
+  # formatar apenas as colunas numericas.
+  # sapply para identificar as colunas numericas e combinar com o parametro COLUNA
+    # ((ncol(df %>% select_if(is.character))+1):(ncol(df )+1)),
+    # http://datamining.togaware.com/survivor/Remove_Non_Numeric.html
+    (c(colnames(df[,sapply(df, is.numeric)]), coluna)),
+  digits = 2,
+  interval = 3,
+  mark = ".",
+  dec.mark = ","
+) 
+}
+```
+
+```{r}
+emendas <-  read_excel("emendas_2023.xlsx") %>% head(-1)
+
+emendas <-    clean_names(emendas) %>%  mutate (autor_emenda = str_remove(autor_emendas_orcamento, regex(" / .*")), data_empenho = parse_date_time(emissao_dia, "%d%m%y"))
+
+emendas <-  rename(emendas, despesa_empenhada =movim_liquido_r_item_informacao )
+
+
+emendas <- emendas %>% mutate(mun_uf = str_c (municipio_cel, "-",uf_cel_sigla))
+
+
+
+library(readr)
+TABMUN <- read_delim("TABMUN.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE) 
+
+TABMUN <- TABMUN %>% mutate(mun_uf = str_c (municipio_cel, "-",uf_cel_sigla))
+
+# adicionar o código IBGE à DF emendas
+emendas <- left_join(emendas,TABMUN %>% select(mun_uf, codigo_ibge))
+
+# municipios <- read_csv("https://raw.githubusercontent.com/kelvins/Municipios-Brasileiros/main/csv/municipios.csv")
+
+municipios <- read_excel("municipios.xlsx")
+
+municipios <-  rename(municipios,   nome_mun =nome ) %>% select(!codigo_uf)
+
+
+emendas <- left_join(emendas, municipios) 
+
+emendas <- emendas %>% mutate(nome_mun_uf = str_c(nome_mun,"-",uf_cel_sigla))
+
+
+```
+
+
+
+```{r}
+emendas <-  emendas %>% mutate (code_regiao = case_when(
+  
+  regiao_cel == "NORTE" ~ 1,
+  regiao_cel == "NORDESTE" ~ 2,
+  regiao_cel == "SUDESTE" ~ 3,
+  regiao_cel == "SUL" ~ 4,
+  regiao_cel == "CENTRO-OESTE" ~ 5
+  ))
+
+
+emendas <- emendas %>% mutate(tipo_local =   case_when(
+  municipio_cel != "SEM INFORMACAO" ~ "município",
+  regiao_cel == "CENTRO-OESTE" & uf_cel_nome == "SEM INFORMACAO" ~ "regiao",
+  regiao_cel == "NORTE"& uf_cel_nome == "SEM INFORMACAO" ~ "regiao",
+  regiao_cel == "SUL" & uf_cel_nome == "SEM INFORMACAO"~ "regiao",
+  regiao_cel == "NORDESTE"& uf_cel_nome == "SEM INFORMACAO" ~ "regiao",
+  regiao_cel == "SUDESTE" & uf_cel_nome == "SEM INFORMACAO"~ "regiao",
+  regiao_cel == "EXTERIOR" & uf_cel_nome == "SEM INFORMACAO"~ "Exterior",
+  regiao_cel == "NACIONAL" & uf_cel_nome == "SEM INFORMACAO"~ "Brasil",
+  TRUE ~ "UF"
+  
+  ))
+
+
+# emendas <- emendas %>% mutate(tipo_emenda = ifelse(resultado_eof_codigo == "9", "Orçamento Secreto", "Demais"))
+
+
+emendas <- emendas %>%  mutate (local = case_when(
+
+  tipo_local == "UF"  ~ uf_cel_sigla,
+  tipo_local == "regiao"  ~ regiao_cel,
+  tipo_local == "Brasil"  ~ tipo_local,
+  tipo_local == "Exterior"  ~ tipo_local,
+    tipo_local == "município" ~ nome_mun_uf
+))
+
+emendas <- emendas %>% mutate(sigla = case_when(
+  
+  local == "CENTRO-OESTE" ~ "CO",
+  local == "NORDESTE" ~ "NE",
+  local == "SUL" ~ "S",
+  local == "NORTE" ~ "N",
+  local == "SUDESTE" ~ "SE"))
+```
+
+
+
+
+```{r message=FALSE, include=FALSE}
+library(geobr)
+
+#| collapse: true
+
+
+regiao <- read_sf("regiao.shp")
+regiao <- regiao %>% mutate(sigla = case_when(
+
+  nam_rgn == "Centro Oeste" ~ "CO",
+  nam_rgn == "Nordeste" ~ "NE",
+  nam_rgn == "Sul" ~ "S",
+  nam_rgn == "Norte" ~ "N",
+  nam_rgn == "Sudeste" ~ "SE"))
+
+
+ 
+ uf <- read_sf("uf.shp")
+
+
+```
+```{r}
+emendas_react <- reactive(emendas %>% filter(autor_emenda %in% input$autor ))
+
+filtro_uf <- reactive (emendas_react() %>% filter(tipo_local == "UF"))
+
+filtro_regiao <- reactive (emendas_react() %>% filter(tipo_local == "regiao"))
+
+
+
+geo_municipio <-reactive(emendas_react() %>% filter(tipo_local== "município") )
+
+
+
+geo_uf <- reactive( uf %>%  filter (abbrv_s %in% unique(filtro_uf()$uf_cel_sigla)))
+
+
+geo_regiao <- reactive( regiao %>%  filter (sigla %in% unique(filtro_regiao()$sigla)))
+
+
+```
+
+
+
+
+
+
+
+
+Visão Geral
+===================================== 
+
+### data
+
+```{r}
+p <- ggplot(emendas %>% group_by(data_empenho, regiao_cel) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(regiao_cel)) + geom_col(aes(x=data_empenho, y = despesa_empenhada, fill = regiao_cel))
+
+ggplotly(p)
+```
+
+### regiao + uf + municípios
+
+```{r}
+p <- ggplot(emendas %>% filter(tipo_local == "regiao" |tipo_local == "UF" |tipo_local == "município") %>% group_by(regiao_cel, tipo_local ) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) ) + geom_col(aes(x= reorder( regiao_cel, despesa_empenhada), y = despesa_empenhada, fill = tipo_local))+ coord_flip()
+
+ggplotly(p)
+```
+
+
+### uf + municípios
+
+```{r}
+p <- ggplot(emendas %>% filter(tipo_local == "UF" |tipo_local == "município" ) %>% group_by(uf_cel_sigla, tipo_local) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) ) + geom_col(aes(x= reorder( uf_cel_sigla, despesa_empenhada), y = despesa_empenhada,  fill = tipo_local))+ coord_flip()
+
+ggplotly(p)
+
+
+```
+
+### top 20 municípios
+
+
+```{r}
+p <- ggplot(emendas %>% filter(tipo_local == "município") %>% group_by(nome_mun_uf) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(20)) + geom_col(aes(x= reorder( nome_mun_uf, despesa_empenhada), y = despesa_empenhada, fill = nome_mun_uf))+ coord_flip()
+
+ggplotly(p)
+```
+
+### top 30 autores
+
+```{r}
+
+p <- ggplot(emendas %>%  group_by(autor_emenda) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(30)) + geom_col(aes(x= reorder( autor_emenda, despesa_empenhada), y = despesa_empenhada))+ coord_flip()
+
+ggplotly(p)
+
+```
+
+
+Autor da Emenda
+=====================================  
+
+Inputs {.sidebar}
+-------------------------------------
+```{r}
+
+
+selectInput  ("autor", label = h3("Escolha o autor da emenda"), 
+    choices = sort(unique(emendas$autor_emenda), decreasing = FALSE), 
+   
+    selected = "EDUARDO BOLSONARO", selectize = TRUE,multiple = TRUE)
+
+```
+
+
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+
+### Mapa
+
+```{r}
+
+
+
+renderLeaflet({
+  
+   leaflet() %>% addTiles() %>%
+  addPolygons(data = geo_regiao())  %>%
+  addPolygons(data = geo_uf()) %>%
+    addMarkers(data = geo_municipio(),  clusterOptions = markerClusterOptions()  , label = str_c(geo_municipio()$nome_mun,": " ,prettyNum( geo_municipio()$despesa_empenhada, big.mark = ".", decimal.mark = "," )))
+  
+})
+
+```
+
+Column {.tabset}
+-----------------------------------------------------------------------
+
+
+### Por localidade
+
+
+```{r}
+
+
+renderDT({tabela_reais(emendas_react() %>% group_by( autor_emenda, local, tipo_local) %>% summarise(valor_empenhado = sum(despesa_empenhada)))}) 
+```
+
+
+### Tabela
+
+```{r}
+
+
+renderDT({tabela_reais(emendas_react() %>% group_by( autor_emenda,local, tipo_local,doc_observacao, emissao_dia ) %>% summarise(valor_empenhado = sum(despesa_empenhada)))}) 
+```
+
+Local do favorecido da emenda
+===================================== 
+
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+
+
+selectInput  ("regiao", label = h3("Escolha a região do favorecido"), 
+    choices = sort(unique(emendas$regiao_cel), decreasing = FALSE), 
+   
+    selected = "NACIONAL", selectize = TRUE,multiple = TRUE)
+
+selectInput  ("uf", label = h3("Escolha a UF favorecido"), 
+    choices = sort(unique(uf$abbrv_s), decreasing = FALSE), 
+   
+    selected = "ES", selectize = TRUE,multiple = TRUE)
+
+selectInput  ("municipio", label = h3("Escolha o município do favorecido"), 
+    choices = sort(unique(emendas$nome_mun_uf), decreasing = FALSE), 
+   
+    selected = "Florianópolis-SC", selectize = TRUE,multiple = TRUE)
+```
+
+
+```{r}
+
+emendas_fav_react <- reactive(emendas %>% filter(regiao_cel %in% input$regiao | uf_cel_sigla %in% input$uf | nome_mun_uf %in% input$municipio ))
+
+filtro_fav_uf <- reactive (emendas_fav_react() %>% filter(tipo_local == "UF"))
+
+filtro_fav_regiao <- reactive (emendas_fav_react() %>% filter(tipo_local == "regiao"))
+
+
+
+geo_fav_municipio <-reactive(emendas_fav_react() %>% filter(tipo_local== "município") )
+
+
+
+geo_fav_uf <- reactive( uf %>%  filter (abbrv_s %in% unique(filtro_fav_uf()$uf_cel_sigla)))
+
+
+geo_fav_regiao <- reactive( regiao %>%  filter (sigla %in% unique(filtro_regiao()$sigla)))
+
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+
+### Mapa Favorecido
+
+```{r}
+renderLeaflet({
+  
+   leaflet() %>% addTiles() %>%
+  addPolygons(data = geo_fav_regiao())  %>%
+  addPolygons(data = geo_fav_uf()) %>%
+    addMarkers(data = geo_fav_municipio(),  clusterOptions = markerClusterOptions()  , label = str_c(geo_fav_municipio()$nome_mun,": " ,prettyNum( geo_fav_municipio()$despesa_empenhada, big.mark = ".", decimal.mark = "," )))
+  
+})
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Por localidade
+
+
+```{r}
+
+
+renderDT({tabela_reais(emendas_fav_react() %>% group_by( autor_emenda, local, ne_c_cor_favorecido_nome, ne_c_cor_favorecido_numero) %>% summarise(valor_empenhado = sum(despesa_empenhada)))}) 
+```
