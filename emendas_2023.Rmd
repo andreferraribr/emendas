@@ -1,5 +1,5 @@
 ---
-title: 'Emendômetro 2023: despesas empenhadas)'
+title: 'Emendas Parlamentares 2023'
 output:
   flexdashboard::flex_dashboard:
     orientation: columns
@@ -213,6 +213,9 @@ geo_regiao <- reactive( regiao %>%  filter (sigla %in% unique(filtro_regiao()$si
 Visão Geral
 ===================================== 
 
+Column {data-width=400}
+-----------------------------------------------------------------------
+
 ### data
 
 ```{r}
@@ -220,11 +223,12 @@ p <- ggplot(emendas %>% group_by(data_empenho, regiao_cel) %>% summarise(despesa
 
 ggplotly(p)
 ```
-
+ Column {.tabset}
+-----------------------------------------------------------------------
 ### regiao + uf + municípios
 
 ```{r}
-p <- ggplot(emendas %>% filter(tipo_local == "regiao" |tipo_local == "UF" |tipo_local == "município") %>% group_by(regiao_cel, tipo_local ) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) ) + geom_col(aes(x= reorder( regiao_cel, despesa_empenhada), y = despesa_empenhada, fill = tipo_local))+ coord_flip()
+p <- ggplot(emendas %>% filter(tipo_local == "regiao" |tipo_local == "UF" |tipo_local == "município") %>% group_by(regiao_cel, tipo_local ) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange((regiao_cel))) + geom_col(aes(x=  regiao_cel, y = despesa_empenhada, fill = tipo_local))+ coord_flip()
 
 ggplotly(p)
 ```
@@ -233,29 +237,33 @@ ggplotly(p)
 ### uf + municípios
 
 ```{r}
-p <- ggplot(emendas %>% filter(tipo_local == "UF" |tipo_local == "município" ) %>% group_by(uf_cel_sigla, tipo_local) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) ) + geom_col(aes(x= reorder( uf_cel_sigla, despesa_empenhada), y = despesa_empenhada,  fill = tipo_local))+ coord_flip()
+p <- ggplot(emendas %>% filter(tipo_local == "UF" |tipo_local == "município" ) %>% group_by(uf_cel_sigla) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) ) + geom_col(aes(x= reorder( uf_cel_sigla, despesa_empenhada), y = despesa_empenhada, fill = -despesa_empenhada))+ coord_flip()+ scale_x_discrete()
 
 ggplotly(p)
 
 
 ```
+
+
 
 ### top 20 municípios
 
 
 ```{r}
-p <- ggplot(emendas %>% filter(tipo_local == "município") %>% group_by(nome_mun_uf) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(20)) + geom_col(aes(x= reorder( nome_mun_uf, despesa_empenhada), y = despesa_empenhada, fill = nome_mun_uf))+ coord_flip()
+p <- ggplot(emendas %>% filter(tipo_local == "município") %>% group_by(nome_mun_uf) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(20)) + geom_col(aes(x= reorder( nome_mun_uf, despesa_empenhada), y = despesa_empenhada, fill = -despesa_empenhada))+ coord_flip()+ scale_x_discrete()
 
 ggplotly(p)
 ```
+
+
 
 ### top 30 autores
 
 ```{r}
 
-p <- ggplot(emendas %>%  group_by(autor_emenda) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(30)) + geom_col(aes(x= reorder( autor_emenda, despesa_empenhada), y = despesa_empenhada))+ coord_flip()
+p <- ggplot(emendas %>%  group_by(autor_emenda) %>% summarise(despesa_empenhada = round(sum(despesa_empenhada))) %>% arrange(despesa_empenhada) %>% tail(30)) + geom_col(aes(x=  reorder( autor_emenda, despesa_empenhada),y = despesa_empenhada , fill = -despesa_empenhada))+ coord_flip()+ scale_x_discrete()
 
-ggplotly(p)
+ggplotly(p )
 
 ```
 
